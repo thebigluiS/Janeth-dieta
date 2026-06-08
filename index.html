@@ -1,0 +1,884 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<!-- Playables SDK -->
+<script>// Playables SDK v1.0.0
+// Game lifecycle bridge: rAF-based game-ready detection + event communication
+(function() {
+  'use strict';
+
+  // Idempotency: skip if already initialized (e.g., server-side injection
+  // followed by client-side inject-javascript via the Bloks webview component).
+  if (window.playablesSDK) return;
+
+  var HANDLER_NAME = 'playablesGameEventHandler';
+  var ANDROID_BRIDGE_NAME = '_MetaPlayablesBridge';
+  var RAF_FRAME_THRESHOLD = 3;
+
+  var gameReadySent = false;
+  var firstInteractionSent = false;
+  var errorSent = false;
+  var frameCount = 0;
+  var originalRAF = window.requestAnimationFrame;
+
+  // --- Transport Layer ---
+
+  function hasIOSBridge() {
+    return !!(window.webkit &&
+              window.webkit.messageHandlers &&
+              window.webkit.messageHandlers[HANDLER_NAME]);
+  }
+
+  function hasAndroidBridge() {
+    return !!(window[ANDROID_BRIDGE_NAME] &&
+              typeof window[ANDROID_BRIDGE_NAME].postEvent === 'function');
+  }
+
+  function isInIframe() {
+    return !!(window.parent && window.parent !== window);
+  }
+
+  function sendEvent(eventName, payload) {
+    var message = {
+      type: eventName,
+      payload: payload || {},
+      timestamp: Date.now()
+    };
+
+    if (hasIOSBridge()) {
+      try {
+        window.webkit.messageHandlers[HANDLER_NAME].postMessage(message);
+      } catch (e) { /* ignore */ }
+      return;
+    }
+
+    if (hasAndroidBridge()) {
+    try {
+      var p = payload || {};
+      p.__secureToken = window.__fbAndroidBridgeAuthToken || '';
+      p.timestamp = message.timestamp;
+      window[ANDROID_BRIDGE_NAME].postEvent(
+        eventName,
+        JSON.stringify(p)
+      );
+    } catch (e) { /* ignore */ }
+    return;
+  }
+
+    if (isInIframe()) {
+      try {
+        window.parent.postMessage(message, '*');
+      } catch (e) { /* ignore */ }
+      return;
+    }
+  }
+
+  // --- rAF Game-Ready Detection ---
+
+  function onFrame() {
+    if (gameReadySent) return;
+
+    frameCount++;
+    if (frameCount >= RAF_FRAME_THRESHOLD) {
+      gameReadySent = true;
+      sendEvent('game_ready', {
+        frame_count: frameCount,
+        detected_at: Date.now()
+      });
+      return;
+    }
+
+    originalRAF.call(window, onFrame);
+  }
+
+  if (originalRAF) {
+    window.requestAnimationFrame = function(callback) {
+      if (!gameReadySent) {
+        return originalRAF.call(window, function(timestamp) {
+          frameCount++;
+          if (frameCount >= RAF_FRAME_THRESHOLD && !gameReadySent) {
+            gameReadySent = true;
+            sendEvent('game_ready', {
+              frame_count: frameCount,
+              detected_at: Date.now()
+            });
+          }
+          callback(timestamp);
+        });
+      }
+      return originalRAF.call(window, callback);
+    };
+  }
+
+  // --- First User Interaction Detection ---
+
+  function setupFirstInteractionDetection() {
+    var events = ['touchstart', 'mousedown', 'keydown'];
+
+    function onFirstInteraction() {
+      if (firstInteractionSent) return;
+      firstInteractionSent = true;
+      sendEvent('user_interaction_start', null);
+
+      for (var i = 0; i < events.length; i++) {
+        document.removeEventListener(events[i], onFirstInteraction, true);
+      }
+    }
+
+    for (var i = 0; i < events.length; i++) {
+      document.addEventListener(events[i], onFirstInteraction, true);
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', setupFirstInteractionDetection);
+  } else {
+    setupFirstInteractionDetection();
+  }
+
+  // --- Auto Error Capture ---
+
+  window.addEventListener('error', function(event) {
+    if (errorSent) return;
+    errorSent = true;
+    sendEvent('error', {
+      message: event.message || 'Unknown error',
+      source: event.filename || '',
+      lineno: event.lineno || 0,
+      colno: event.colno || 0,
+      auto_captured: true
+    });
+  });
+
+  window.addEventListener('unhandledrejection', function(event) {
+    if (errorSent) return;
+    errorSent = true;
+    var reason = event.reason;
+    sendEvent('error', {
+      message: (reason instanceof Error) ? reason.message : String(reason),
+      type: 'unhandled_promise_rejection',
+      auto_captured: true
+    });
+  });
+
+  // --- Public API ---
+
+  window.playablesSDK = {
+    complete: function(score) {
+      sendEvent('game_ended', {
+        score: score,
+        completed: true
+      });
+    },
+
+    error: function(message) {
+      if (errorSent) return;
+      errorSent = true;
+      sendEvent('error', {
+        message: message || 'Unknown error',
+        auto_captured: false
+      });
+    },
+
+    sendEvent: function(eventName, payload) {
+      if (!eventName || typeof eventName !== 'string') return;
+      sendEvent(eventName, payload);
+    }
+  };
+
+  // Kick off rAF detection in case no game code calls rAF immediately
+  if (originalRAF) {
+    originalRAF.call(window, onFrame);
+  }
+})();</script>
+<!-- PLAYABLE_TOUCH_PATCH_V1 --><script>
+(function() {
+  if (window.__playableTouchPatchInstalled) return;
+  window.__playableTouchPatchInstalled = true;
+  var origAdd = EventTarget.prototype.addEventListener;
+  var blockedTypes = { touchstart: 1, touchmove: 1, wheel: 1 };
+  EventTarget.prototype.addEventListener = function(type, listener, options) {
+    if (blockedTypes[type]) {
+      if (options === undefined || options === null) {
+        options = { passive: true };
+      } else if (typeof options === 'boolean') {
+        options = { capture: options, passive: true };
+      } else {
+        options = Object.assign({}, options, { passive: true });
+      }
+    }
+    return origAdd.call(this, type, listener, options);
+  };
+})();
+</script><script>window.Intl=window.Intl||{};Intl.t=function(s){return(Intl._locale&&Intl._locale[s])||s;};</script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Plan Alimentación Semanal - Déficit Calórico</title>
+<style>
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    background: #ffffff;
+    color: #000000;
+    line-height: 1.6;
+    padding: 20px;
+}
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+}
+.header {
+    border: 3px solid #000000;
+    padding: 24px;
+    margin-bottom: 32px;
+    background: #ffffff;
+}
+.header h1 {
+    font-size: 28px;
+    font-weight: 700;
+    margin-bottom: 16px;
+    text-align: center;
+}
+.stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 12px;
+    margin-bottom: 20px;
+    text-align: center;
+}
+.stat-item {
+    border: 2px solid #000000;
+    padding: 12px;
+}
+.stat-label {
+    font-size: 12px;
+    text-transform: uppercase;
+    font-weight: 600;
+    opacity: 0.7;
+}
+.stat-value {
+    font-size: 20px;
+    font-weight: 700;
+    margin-top: 4px;
+}
+.nota-colageno {
+    border: 2px solid #000000;
+    padding: 12px;
+    text-align: center;
+    font-weight: 600;
+    background: #f5f5f5;
+}
+.day-section {
+    border: 3px solid #000000;
+    margin-bottom: 24px;
+    background: #ffffff;
+}
+.day-header {
+    background: #000000;
+    color: #ffffff;
+    padding: 14px 20px;
+    font-size: 20px;
+    font-weight: 700;
+    text-align: center;
+}
+.meal-block {
+    border-bottom: 2px solid #000000;
+    padding: 20px;
+}
+.meal-block:last-child {
+    border-bottom: none;
+}
+.meal-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid #000000;
+}
+.meal-emoji {
+    font-size: 40px;
+    line-height: 1;
+}
+.meal-title {
+    flex: 1;
+}
+.meal-name {
+    font-size: 18px;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+.meal-time {
+    font-size: 14px;
+    opacity: 0.8;
+    font-weight: 600;
+}
+.meal-macros {
+    font-size: 13px;
+    font-weight: 600;
+    margin-top: 4px;
+}
+.pre-entreno {
+    background: #fafafa;
+    border: 2px solid #000000;
+    padding: 12px;
+    font-weight: 600;
+}
+.option {
+    border: 2px solid #000000;
+    padding: 14px;
+    margin-bottom: 12px;
+    background: #ffffff;
+}
+.option:last-child {
+    margin-bottom: 0;
+}
+.option-header {
+    font-weight: 700;
+    font-size: 14px;
+    margin-bottom: 6px;
+    text-transform: uppercase;
+}
+.option-content {
+    font-size: 15px;
+    margin-bottom: 8px;
+}
+.option-macros {
+    font-size: 13px;
+    font-weight: 600;
+    padding-top: 8px;
+    border-top: 1px solid #ccc;
+}
+.total-dia {
+    background: #000000;
+    color: #ffffff;
+    padding: 16px;
+    text-align: center;
+    font-weight: 700;
+    font-size: 16px;
+}
+.footer {
+    border: 3px solid #000000;
+    padding: 20px;
+    text-align: center;
+    margin-top: 32px;
+    font-size: 14px;
+}
+@media (max-width: 768px) {
+    body {
+        padding: 12px;
+    }
+    .header h1 {
+        font-size: 22px;
+    }
+    .meal-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    .meal-emoji {
+        font-size: 32px;
+    }
+    .stat-value {
+        font-size: 18px;
+    }
+    .day-header {
+        font-size: 18px;
+    }
+}
+</style>
+</head>
+<body>
+<div class="container">
+    <div class="header">
+        <h1>PLAN SEMANAL DE ALIMENTACIÓN</h1>
+        <div class="stats">
+            <div class="stat-item">
+                <div class="stat-label">Edad</div>
+                <div class="stat-value">54 años</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-label">Altura</div>
+                <div class="stat-value">168 cm</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-label">Peso</div>
+                <div class="stat-value">69.6 kg</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-label">Objetivo Kcal</div>
+                <div class="stat-value">1,600-1,750</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-label">Proteína/Día</div>
+                <div class="stat-value">130-145g</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-label">Grasas/Día</div>
+                <div class="stat-value">50-60g</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-label">Carbos/Día</div>
+                <div class="stat-value">130-170g</div>
+            </div>
+        </div>
+        <div class="nota-colageno">
+            NOTA: Colágeno 20g puede tomarlo en la mañana o noche según preferencia
+        </div>
+    </div>
+
+    <!-- LUNES -->
+    <div class="day-section">
+        <div class="day-header">LUNES</div>
+        
+        <div class="meal-block">
+            <div class="meal-header">
+                <div class="meal-emoji">💪</div>
+                <div class="meal-title">
+                    <div class="meal-name">Pre-Entreno</div>
+                    <div class="meal-time">6:00 - 7:00 AM | Entrena en ayunas solo con esto</div>
+                    <div class="meal-macros">120 kcal | P25g C3g G0g</div>
+                </div>
+            </div>
+            <div class="pre-entreno">
+                1 scoop Proteína Isolate Gold + 5g Creatina Monohidrato con agua
+            </div>
+        </div>
+
+        <div class="meal-block">
+            <div class="meal-header">
+                <div class="meal-emoji">🍳</div>
+                <div class="meal-title">
+                    <div class="meal-name">Desayuno Post-Entreno</div>
+                    <div class="meal-time">10:00 - 11:00 AM | Elige 1 opción</div>
+                </div>
+            <div class="option">
+                <div class="option-header">Opción 1</div>
+                <div class="option-content">4 claras + 2 huevos enteros + 2 rebanadas pan integral + 30g palta + 100g tomate</div>
+                <div class="option-macros">640 kcal | P48g G24g C55g</div>
+            </div>
+            <div class="option">
+                <div class="option-header">Opción 2</div>
+                <div class="option-content">60g avena + 1 scoop proteína + 100g frutos rojos + 15g almendras + canela</div>
+                <div class="option-macros">620 kcal | P45g G18g C68g</div>
+            </div>
+            <div class="option">
+                <div class="option-header">Opción 3</div>
+                <div class="option-content">3 huevos enteros + 150g camote cocido + 30g queso fresco + espinaca</div>
+                <div class="option-macros">650 kcal | P42g G26g C62g</div>
+            </div>
+            <div class="option">
+                <div class="option-header">Opción 4</div>
+                <div class="option-content">2 tostadas integrales + 2 huevos + 50g palta + tomate + café</div>
+                <div class="option-macros">630 kcal | P40g G28g C58g</div>
+            </div>
+        </div>
+
+        <div class="meal-block">
+            <div class="meal-header">
+                <div class="meal-emoji">🍗</div>
+                <div class="meal-title">
+                    <div class="meal-name">Almuerzo</div>
+                    <div class="meal-time">2:00 - 3:00 PM | Elige 1 opción</div>
+                </div>
+            </div>
+            <div class="option">
+                <div class="option-header">Opción 1</div>
+                <div class="option-content">150g pechuga pollo + 150g arroz integral cocido + brócoli al vapor + 1cda aceite oliva</div>
+                <div class="option-macros">680 kcal | P52g G22g C68g</div>
+            </div>
+            <div class="option">
+                <div class="option-header">Opción 2</div>
+                <div class="option-content">180g salmón + 150g quinua cocida + ensalada verde + limón</div>
+                <div class="option-macros">690 kcal | P50g G28g C62g</div>
+            </div>
+            <div class="option">
+                <div class="option-header">Opción 3</div>
+                <div class="option-content">180g lomo magro + 200g papa cocida + vegetales salteados + 1cda aceite</div>
+                <div class="option-macros">700 kcal | P54g G24g C65g</div>
+            </div>
+            <div class="option">
+                <div class="option-header">Opción 4</div>
+                <div class="option-content">2 latas atún en agua + 150g lentejas cocidas + 50g palta + ensalada</div>
+                <div class="option-macros">670 kcal | P56g G25g C58g</div>
+            </div>
+        </div>
+
+        <div class="meal-block">
+            <div class="meal-header">
+                <div class="meal-emoji">🥗</div>
+                <div class="meal-title">
+                    <div class="meal-name">Snack / Cena - Última Comida</div>
+                    <div class="meal-time">6:00 - 7:00 PM | Elige 1 opción</div>
+                </div>
+            <div class="option">
+                <div class="option-header">Opción 1</div>
+                <div class="option-content">200g yogurt griego 0% + 100g frutos rojos + 15g almendras</div>
+                <div class="option-macros">320 kcal | P28g G12g C28g</div>
+            </div>
+            <div class="option">
+                <div class="option-header">Opción 2</div>
+                <div class="option-content">150g queso cottage + 1 durazno mediano + 10g nueces</div>
+                <div class="option-macros">310 kcal | P26g G14g C22g</div>
+            </div>
+            <div class="option">
+                <div class="option-header">Opción 3</div>
+                <div class="option-content">2 huevos duros + 100g tomate cherry + 20g aceitunas + 1 galleta integral</div>
+                <div class="option-macros">340 kcal | P22g G24g C12g</div>
+            </div>
+            <div class="option">
+                <div class="option-header">Opción 4</div>
+                <div class="option-content">50g palta + 1 lata atún + 2 galletas integrales</div>
+                <div class="option-macros">350 kcal | P30g G20g C18g</div>
+            </div>
+        </div>
+        <div class="total-dia">TOTAL DÍA: 1,670 - 1,800 kcal | P130-145g | G50-60g | C130-170g</div>
+    </div>
+
+    <!-- MARTES -->
+    <div class="day-section">
+        <div class="day-header">MARTES</div>
+        <div class="meal-block">
+            <div class="meal-header">
+                <div class="meal-emoji">💪</div>
+                <div class="meal-title">
+                    <div class="meal-name">Pre-Entreno</div>
+                    <div class="meal-time">6:00 - 7:00 AM | Entrena en ayunas solo con esto</div>
+                    <div class="meal-macros">120 kcal | P25g C3g G0g</div>
+                </div>
+            </div>
+            <div class="pre-entreno">1 scoop Proteína Isolate Gold + 5g Creatina Monohidrato con agua</div>
+        </div>
+        <div class="meal-block">
+            <div class="meal-header">
+                <div class="meal-emoji">🍳</div>
+                <div class="meal-title">
+                    <div class="meal-name">Desayuno Post-Entreno</div>
+                    <div class="meal-time">10:00 - 11:00 AM | Elige 1 opción</div>
+                </div>
+            </div>
+            <div class="option"><div class="option-header">Opción 1</div><div class="option-content">4 claras + 2 huevos enteros + 2 rebanadas pan integral + 30g palta + 100g tomate</div><div class="option-macros">640 kcal | P48g G24g C55g</div></div>
+            <div class="option"><div class="option-header">Opción 2</div><div class="option-content">60g avena + 1 scoop proteína + 100g frutos rojos + 15g almendras + canela</div><div class="option-macros">620 kcal | P45g G18g C68g</div></div>
+            <div class="option"><div class="option-header">Opción 3</div><div class="option-content">3 huevos enteros + 150g camote cocido + 30g queso fresco + espinaca</div><div class="option-macros">650 kcal | P42g G26g C62g</div></div>
+            <div class="option"><div class="option-header">Opción 4</div><div class="option-content">2 tostadas integrales + 2 huevos + 50g palta + tomate + café</div><div class="option-macros">630 kcal | P40g G28g C58g</div></div>
+        </div>
+        <div class="meal-block">
+            <div class="meal-header">
+                <div class="meal-emoji">🍗</div>
+                <div class="meal-title">
+                    <div class="meal-name">Almuerzo</div>
+                    <div class="meal-time">2:00 - 3:00 PM | Elige 1 opción</div>
+                </div>
+            </div>
+            <div class="option"><div class="option-header">Opción 1</div><div class="option-content">150g pechuga pollo + 150g arroz integral cocido + brócoli al vapor + 1cda aceite oliva</div><div class="option-macros">680 kcal | P52g G22g C68g</div></div>
+            <div class="option"><div class="option-header">Opción 2</div><div class="option-content">180g salmón + 150g quinua cocida + ensalada verde + limón</div><div class="option-macros">690 kcal | P50g G28g C62g</div></div>
+            <div class="option"><div class="option-header">Opción 3</div><div class="option-content">180g lomo magro + 200g papa cocida + vegetales salteados + 1cda aceite</div><div class="option-macros">700 kcal | P54g G24g C65g</div></div>
+            <div class="option"><div class="option-header">Opción 4</div><div class="option-content">2 latas atún en agua + 150g lentejas cocidas + 50g palta + ensalada</div><div class="option-macros">670 kcal | P56g G25g C58g</div></div>
+        </div>
+        <div class="meal-block">
+            <div class="meal-header">
+                <div class="meal-emoji">🥗</div>
+                <div class="meal-title">
+                    <div class="meal-name">Snack / Cena - Última Comida</div>
+                    <div class="meal-time">6:00 - 7:00 PM | Elige 1 opción</div>
+                </div>
+            </div>
+            <div class="option"><div class="option-header">Opción 1</div><div class="option-content">200g yogurt griego 0% + 100g frutos rojos + 15g almendras</div><div class="option-macros">320 kcal | P28g G12g C28g</div></div>
+            <div class="option"><div class="option-header">Opción 2</div><div class="option-content">150g queso cottage + 1 durazno mediano + 10g nueces</div><div class="option-macros">310 kcal | P26g G14g C22g</div></div>
+            <div class="option"><div class="option-header">Opción 3</div><div class="option-content">2 huevos duros + 100g tomate cherry + 20g aceitunas + 1 galleta integral</div><div class="option-macros">340 kcal | P22g G24g C12g</div></div>
+            <div class="option"><div class="option-header">Opción 4</div><div class="option-content">50g palta + 1 lata atún + 2 galletas integrales</div><div class="option-macros">350 kcal | P30g G20g C18g</div></div>
+        </div>
+        <div class="total-dia">TOTAL DÍA: 1,670 - 1,800 kcal | P130-145g | G50-60g | C130-170g</div>
+    </div>
+
+    <!-- MIÉRCOLES -->
+    <div class="day-section">
+        <div class="day-header">MIÉRCOLES</div>
+        <div class="meal-block">
+            <div class="meal-header">
+                <div class="meal-emoji">💪</div>
+                <div class="meal-title">
+                    <div class="meal-name">Pre-Entreno</div>
+                    <div class="meal-time">6:00 - 7:00 AM | Entrena en ayunas solo con esto</div>
+                    <div class="meal-macros">120 kcal | P25g C3g G0g</div>
+                </div>
+            </div>
+            <div class="pre-entreno">1 scoop Proteína Isolate Gold + 5g Creatina Monohidrato con agua</div>
+        </div>
+        <div class="meal-block">
+            <div class="meal-header">
+                <div class="meal-emoji">🍳</div>
+                <div class="meal-title">
+                    <div class="meal-name">Desayuno Post-Entreno</div>
+                    <div class="meal-time">10:00 - 11:00 AM | Elige 1 opción</div>
+                </div>
+            </div>
+            <div class="option"><div class="option-header">Opción 1</div><div class="option-content">4 claras + 2 huevos enteros + 2 rebanadas pan integral + 30g palta + 100g tomate</div><div class="option-macros">640 kcal | P48g G24g C55g</div></div>
+            <div class="option"><div class="option-header">Opción 2</div><div class="option-content">60g avena + 1 scoop proteína + 100g frutos rojos + 15g almendras + canela</div><div class="option-macros">620 kcal | P45g G18g C68g</div></div>
+            <div class="option"><div class="option-header">Opción 3</div><div class="option-content">3 huevos enteros + 150g camote cocido + 30g queso fresco + espinaca</div><div class="option-macros">650 kcal | P42g G26g C62g</div></div>
+            <div class="option"><div class="option-header">Opción 4</div><div class="option-content">2 tostadas integrales + 2 huevos + 50g palta + tomate + café</div><div class="option-macros">630 kcal | P40g G28g C58g</div></div>
+        </div>
+        <div class="meal-block">
+            <div class="meal-header">
+                <div class="meal-emoji">🍗</div>
+                <div class="meal-title">
+                    <div class="meal-name">Almuerzo</div>
+                    <div class="meal-time">2:00 - 3:00 PM | Elige 1 opción</div>
+                </div>
+            <div class="option"><div class="option-header">Opción 1</div><div class="option-content">150g pechuga pollo + 150g arroz integral cocido + brócoli al vapor + 1cda aceite oliva</div><div class="option-macros">680 kcal | P52g G22g C68g</div></div>
+            <div class="option"><div class="option-header">Opción 2</div><div class="option-content">180g salmón + 150g quinua cocida + ensalada verde + limón</div><div class="option-macros">690 kcal | P50g G28g C62g</div></div>
+            <div class="option"><div class="option-header">Opción 3</div><div class="option-content">180g lomo magro + 200g papa cocida + vegetales salteados + 1cda aceite</div><div class="option-macros">700 kcal | P54g G24g C65g</div></div>
+            <div class="option"><div class="option-header">Opción 4</div><div class="option-content">2 latas atún en agua + 150g lentejas cocidas + 50g palta + ensalada</div><div class="option-macros">670 kcal | P56g G25g C58g</div></div>
+        </div>
+        <div class="meal-block">
+            <div class="meal-header">
+                <div class="meal-emoji">🥗</div>
+                <div class="meal-title">
+                    <div class="meal-name">Snack / Cena - Última Comida</div>
+                    <div class="meal-time">6:00 - 7:00 PM | Elige 1 opción</div>
+                </div>
+            </div>
+            <div class="option"><div class="option-header">Opción 1</div><div class="option-content">200g yogurt griego 0% + 100g frutos rojos + 15g almendras</div><div class="option-macros">320 kcal | P28g G12g C28g</div></div>
+            <div class="option"><div class="option-header">Opción 2</div><div class="option-content">150g queso cottage + 1 durazno mediano + 10g nueces</div><div class="option-macros">310 kcal | P26g G14g C22g</div></div>
+            <div class="option"><div class="option-header">Opción 3</div><div class="option-content">2 huevos duros + 100g tomate cherry + 20g aceitunas + 1 galleta integral</div><div class="option-macros">340 kcal | P22g G24g C12g</div></div>
+            <div class="option"><div class="option-header">Opción 4</div><div class="option-content">50g palta + 1 lata atún + 2 galletas integrales</div><div class="option-macros">350 kcal | P30g G20g C18g</div></div>
+        </div>
+        <div class="total-dia">TOTAL DÍA: 1,670 - 1,800 kcal | P130-145g | G50-60g | C130-170g</div>
+    </div>
+
+    <!-- JUEVES -->
+    <div class="day-section">
+        <div class="day-header">JUEVES</div>
+        <div class="meal-block">
+            <div class="meal-header">
+                <div class="meal-emoji">💪</div>
+                <div class="meal-title">
+                    <div class="meal-name">Pre-Entreno</div>
+                    <div class="meal-time">6:00 - 7:00 AM | Entrena en ayunas solo con esto</div>
+                    <div class="meal-macros">120 kcal | P25g C3g G0g</div>
+                </div>
+            </div>
+            <div class="pre-entreno">1 scoop Proteína Isolate Gold + 5g Creatina Monohidrato con agua</div>
+        </div>
+        <div class="meal-block">
+            <div class="meal-header">
+                <div class="meal-emoji">🍳</div>
+                <div class="meal-title">
+                    <div class="meal-name">Desayuno Post-Entreno</div>
+                    <div class="meal-time">10:00 - 11:00 AM | Elige 1 opción</div>
+                </div>
+            </div>
+            <div class="option"><div class="option-header">Opción 1</div><div class="option-content">4 claras + 2 huevos enteros + 2 rebanadas pan integral + 30g palta + 100g tomate</div><div class="option-macros">640 kcal | P48g G24g C55g</div></div>
+            <div class="option"><div class="option-header">Opción 2</div><div class="option-content">60g avena + 1 scoop proteína + 100g frutos rojos + 15g almendras + canela</div><div class="option-macros">620 kcal | P45g G18g C68g</div></div>
+            <div class="option"><div class="option-header">Opción 3</div><div class="option-content">3 huevos enteros + 150g camote cocido + 30g queso fresco + espinaca</div><div class="option-macros">650 kcal | P42g G26g C62g</div></div>
+            <div class="option"><div class="option-header">Opción 4</div><div class="option-content">2 tostadas integrales + 2 huevos + 50g palta + tomate + café</div><div class="option-macros">630 kcal | P40g G28g C58g</div></div>
+        </div>
+        <div class="meal-block">
+            <div class="meal-header">
+                <div class="meal-emoji">🍗</div>
+                <div class="meal-title">
+                    <div class="meal-name">Almuerzo</div>
+                    <div class="meal-time">2:00 - 3:00 PM | Elige 1 opción</div>
+                </div>
+            </div>
+            <div class="option"><div class="option-header">Opción 1</div><div class="option-content">150g pechuga pollo + 150g arroz integral cocido + brócoli al vapor + 1cda aceite oliva</div><div class="option-macros">680 kcal | P52g G22g C68g</div></div>
+            <div class="option"><div class="option-header">Opción 2</div><div class="option-content">180g salmón + 150g quinua cocida + ensalada verde + limón</div><div class="option-macros">690 kcal | P50g G28g C62g</div></div>
+            <div class="option"><div class="option-header">Opción 3</div><div class="option-content">180g lomo magro + 200g papa cocida + vegetales salteados + 1cda aceite</div><div class="option-macros">700 kcal | P54g G24g C65g</div></div>
+            <div class="option"><div class="option-header">Opción 4</div><div class="option-content">2 latas atún en agua + 150g lentejas cocidas + 50g palta + ensalada</div><div class="option-macros">670 kcal | P56g G25g C58g</div></div>
+        </div>
+        <div class="meal-block">
+            <div class="meal-header">
+                <div class="meal-emoji">🥗</div>
+                <div class="meal-title">
+                    <div class="meal-name">Snack / Cena - Última Comida</div>
+                    <div class="meal-time">6:00 - 7:00 PM | Elige 1 opción</div>
+                </div>
+            </div>
+            <div class="option"><div class="option-header">Opción 1</div><div class="option-content">200g yogurt griego 0% + 100g frutos rojos + 15g almendras</div><div class="option-macros">320 kcal | P28g G12g C28g</div></div>
+            <div class="option"><div class="option-header">Opción 2</div><div class="option-content">150g queso cottage + 1 durazno mediano + 10g nueces</div><div class="option-macros">310 kcal | P26g G14g C22g</div></div>
+            <div class="option"><div class="option-header">Opción 3</div><div class="option-content">2 huevos duros + 100g tomate cherry + 20g aceitunas + 1 galleta integral</div><div class="option-macros">340 kcal | P22g G24g C12g</div></div>
+            <div class="option"><div class="option-header">Opción 4</div><div class="option-content">50g palta + 1 lata atún + 2 galletas integrales</div><div class="option-macros">350 kcal | P30g G20g C18g</div></div>
+        </div>
+        <div class="total-dia">TOTAL DÍA: 1,670 - 1,800 kcal | P130-145g | G50-60g | C130-170g</div>
+    </div>
+
+    <!-- VIERNES -->
+    <div class="day-section">
+        <div class="day-header">VIERNES</div>
+        <div class="meal-block">
+            <div class="meal-header">
+                <div class="meal-emoji">💪</div>
+                <div class="meal-title">
+                    <div class="meal-name">Pre-Entreno</div>
+                    <div class="meal-time">6:00 - 7:00 AM | Entrena en ayunas solo con esto</div>
+                    <div class="meal-macros">120 kcal | P25g C3g G0g</div>
+                </div>
+            </div>
+            <div class="pre-entreno">1 scoop Proteína Isolate Gold + 5g Creatina Monohidrato con agua</div>
+        </div>
+        <div class="meal-block">
+            <div class="meal-header">
+                <div class="meal-emoji">🍳</div>
+                <div class="meal-title">
+                    <div class="meal-name">Desayuno Post-Entreno</div>
+                    <div class="meal-time">10:00 - 11:00 AM | Elige 1 opción</div>
+                </div>
+            </div>
+            <div class="option"><div class="option-header">Opción 1</div><div class="option-content">4 claras + 2 huevos enteros + 2 rebanadas pan integral + 30g palta + 100g tomate</div><div class="option-macros">640 kcal | P48g G24g C55g</div></div>
+            <div class="option"><div class="option-header">Opción 2</div><div class="option-content">60g avena + 1 scoop proteína + 100g frutos rojos + 15g almendras + canela</div><div class="option-macros">620 kcal | P45g G18g C68g</div></div>
+            <div class="option"><div class="option-header">Opción 3</div><div class="option-content">3 huevos enteros + 150g camote cocido + 30g queso fresco + espinaca</div><div class="option-macros">650 kcal | P42g G26g C62g</div></div>
+            <div class="option"><div class="option-header">Opción 4</div><div class="option-content">2 tostadas integrales + 2 huevos + 50g palta + tomate + café</div><div class="option-macros">630 kcal | P40g G28g C58g</div></div>
+        </div>
+        <div class="meal-block">
+            <div class="meal-header">
+                <div class="meal-emoji">🍗</div>
+                <div class="meal-title">
+                    <div class="meal-name">Almuerzo</div>
+                    <div class="meal-time">2:00 - 3:00 PM | Elige 1 opción</div>
+                </div>
+            </div>
+            <div class="option"><div class="option-header">Opción 1</div><div class="option-content">150g pechuga pollo + 150g arroz integral cocido + brócoli al vapor + 1cda aceite oliva</div><div class="option-macros">680 kcal | P52g G22g C68g</div></div>
+            <div class="option"><div class="option-header">Opción 2</div><div class="option-content">180g salmón + 150g quinua cocida + ensalada verde + limón</div><div class="option-macros">690 kcal | P50g G28g C62g</div></div>
+            <div class="option"><div class="option-header">Opción 3</div><div class="option-content">180g lomo magro + 200g papa cocida + vegetales salteados + 1cda aceite</div><div class="option-macros">700 kcal | P54g G24g C65g</div></div>
+            <div class="option"><div class="option-header">Opción 4</div><div class="option-content">2 latas atún en agua + 150g lentejas cocidas + 50g palta + ensalada</div><div class="option-macros">670 kcal | P56g G25g C58g</div></div>
+        </div>
+        <div class="meal-block">
+            <div class="meal-header">
+                <div class="meal-emoji">🥗</div>
+                <div class="meal-title">
+                    <div class="meal-name">Snack / Cena - Última Comida</div>
+                    <div class="meal-time">6:00 - 7:00 PM | Elige 1 opción</div>
+                </div>
+            </div>
+            <div class="option"><div class="option-header">Opción 1</div><div class="option-content">200g yogurt griego 0% + 100g frutos rojos + 15g almendras</div><div class="option-macros">320 kcal | P28g G12g C28g</div></div>
+            <div class="option"><div class="option-header">Opción 2</div><div class="option-content">150g queso cottage + 1 durazno mediano + 10g nueces</div><div class="option-macros">310 kcal | P26g G14g C22g</div></div>
+            <div class="option"><div class="option-header">Opción 3</div><div class="option-content">2 huevos duros + 100g tomate cherry + 20g aceitunas + 1 galleta integral</div><div class="option-macros">340 kcal | P22g G24g C12g</div></div>
+            <div class="option"><div class="option-header">Opción 4</div><div class="option-content">50g palta + 1 lata atún + 2 galletas integrales</div><div class="option-macros">350 kcal | P30g G20g C18g</div></div>
+        </div>
+        <div class="total-dia">TOTAL DÍA: 1,670 - 1,800 kcal | P130-145g | G50-60g | C130-170g</div>
+    </div>
+
+    <!-- SÁBADO -->
+    <div class="day-section">
+        <div class="day-header">SÁBADO</div>
+        <div class="meal-block">
+            <div class="meal-header">
+                <div class="meal-emoji">💪</div>
+                <div class="meal-title">
+                    <div class="meal-name">Pre-Entreno</div>
+                    <div class="meal-time">6:00 - 7:00 AM | Entrena en ayunas solo con esto</div>
+                    <div class="meal-macros">120 kcal | P25g C3g G0g</div>
+                </div>
+            </div>
+            <div class="pre-entreno">1 scoop Proteína Isolate Gold + 5g Creatina Monohidrato con agua</div>
+        </div>
+        <div class="meal-block">
+            <div class="meal-header">
+                <div class="meal-emoji">🍳</div>
+                <div class="meal-title">
+                    <div class="meal-name">Desayuno Post-Entreno</div>
+                    <div class="meal-time">10:00 - 11:00 AM | Elige 1 opción</div>
+                </div>
+            </div>
+            <div class="option"><div class="option-header">Opción 1</div><div class="option-content">4 claras + 2 huevos enteros + 2 rebanadas pan integral + 30g palta + 100g tomate</div><div class="option-macros">640 kcal | P48g G24g C55g</div></div>
+            <div class="option"><div class="option-header">Opción 2</div><div class="option-content">60g avena + 1 scoop proteína + 100g frutos rojos + 15g almendras + canela</div><div class="option-macros">620 kcal | P45g G18g C68g</div></div>
+            <div class="option"><div class="option-header">Opción 3</div><div class="option-content">3 huevos enteros + 150g camote cocido + 30g queso fresco + espinaca</div><div class="option-macros">650 kcal | P42g G26g C62g</div></div>
+            <div class="option"><div class="option-header">Opción 4</div><div class="option-content">2 tostadas integrales + 2 huevos + 50g palta + tomate + café</div><div class="option-macros">630 kcal | P40g G28g C58g</div></div>
+        </div>
+        <div class="meal-block">
+            <div class="meal-header">
+                <div class="meal-emoji">🍗</div>
+                <div class="meal-title">
+                    <div class="meal-name">Almuerzo</div>
+                    <div class="meal-time">2:00 - 3:00 PM | Elige 1 opción</div>
+                </div>
+            </div>
+            <div class="option"><div class="option-header">Opción 1</div><div class="option-content">150g pechuga pollo + 150g arroz integral cocido + brócoli al vapor + 1cda aceite oliva</div><div class="option-macros">680 kcal | P52g G22g C68g</div></div>
+            <div class="option"><div class="option-header">Opción 2</div><div class="option-content">180g salmón + 150g quinua cocida + ensalada verde + limón</div><div class="option-macros">690 kcal | P50g G28g C62g</div></div>
+            <div class="option"><div class="option-header">Opción 3</div><div class="option-content">180g lomo magro + 200g papa cocida + vegetales salteados + 1cda aceite</div><div class="option-macros">700 kcal | P54g G24g C65g</div></div>
+            <div class="option"><div class="option-header">Opción 4</div><div class="option-content">2 latas atún en agua + 150g lentejas cocidas + 50g palta + ensalada</div><div class="option-macros">670 kcal | P56g G25g C58g</div></div>
+        </div>
+        <div class="meal-block">
+            <div class="meal-header">
+                <div class="meal-emoji">🥗</div>
+                <div class="meal-title">
+                    <div class="meal-name">Snack / Cena - Última Comida</div>
+                    <div class="meal-time">6:00 - 7:00 PM | Elige 1 opción</div>
+                </div>
+            </div>
+            <div class="option"><div class="option-header">Opción 1</div><div class="option-content">200g yogurt griego 0% + 100g frutos rojos + 15g almendras</div><div class="option-macros">320 kcal | P28g G12g C28g</div></div>
+            <div class="option"><div class="option-header">Opción 2</div><div class="option-content">150g queso cottage + 1 durazno mediano + 10g nueces</div><div class="option-macros">310 kcal | P26g G14g C22g</div></div>
+            <div class="option"><div class="option-header">Opción 3</div><div class="option-content">2 huevos duros + 100g tomate cherry + 20g aceitunas + 1 galleta integral</div><div class="option-macros">340 kcal | P22g G24g C12g</div></div>
+            <div class="option"><div class="option-header">Opción 4</div><div class="option-content">50g palta + 1 lata atún + 2 galletas integrales</div><div class="option-macros">350 kcal | P30g G20g C18g</div></div>
+        </div>
+        <div class="total-dia">TOTAL DÍA: 1,670 - 1,800 kcal | P130-145g | G50-60g | C130-170g</div>
+    </div>
+
+    <!-- DOMINGO -->
+    <div class="day-section">
+        <div class="day-header">DOMINGO</div>
+        <div class="meal-block">
+            <div class="meal-header">
+                <div class="meal-emoji">💪</div>
+                <div class="meal-title">
+                    <div class="meal-name">Pre-Entreno</div>
+                    <div class="meal-time">6:00 - 7:00 AM | Entrena en ayunas solo con esto</div>
+                    <div class="meal-macros">120 kcal | P25g C3g G0g</div>
+                </div>
+            </div>
+            <div class="pre-entreno">1 scoop Proteína Isolate Gold + 5g Creatina Monohidrato con agua</div>
+        </div>
+        <div class="meal-block">
+            <div class="meal-header">
+                <div class="meal-emoji">🍳</div>
+                <div class="meal-title">
+                    <div class="meal-name">Desayuno Post-Entreno</div>
+                    <div class="meal-time">10:00 - 11:00 AM | Elige 1 opción</div>
+                </div>
+            </div>
+            <div class="option"><div class="option-header">Opción 1</div><div class="option-content">4 claras + 2 huevos enteros + 2 rebanadas pan integral + 30g palta + 100g tomate</div><div class="option-macros">640 kcal | P48g G24g C55g</div></div>
+            <div class="option"><div class="option-header">Opción 2</div><div class="option-content">60g avena + 1 scoop proteína + 100g frutos rojos + 15g almendras + canela</div><div class="option-macros">620 kcal | P45g G18g C68g</div></div>
+            <div class="option"><div class="option-header">Opción 3</div><div class="option-content">3 huevos enteros + 150g camote cocido + 30g queso fresco + espinaca</div><div class="option-macros">650 kcal | P42g G26g C62g</div></div>
+            <div class="option"><div class="option-header">Opción 4</div><div class="option-content">2 tostadas integrales + 2 huevos + 50g palta + tomate + café</div><div class="option-macros">630 kcal | P40g G28g C58g</div></div>
+        </div>
+        <div class="meal-block">
+            <div class="meal-header">
+                <div class="meal-emoji">🍗</div>
+                <div class="meal-title">
+                    <div class="meal-name">Almuerzo</div>
+                    <div class="meal-time">2:00 - 3:00 PM | Elige 1 opción</div>
+                </div>
+            </div>
+            <div class="option"><div class="option-header">Opción 1</div><div class="option-content">150g pechuga pollo + 150g arroz integral cocido + brócoli al vapor + 1cda aceite oliva</div><div class="option-macros">680 kcal | P52g G22g C68g</div></div>
+            <div class="option"><div class="option-header">Opción 2</div><div class="option-content">180g salmón + 150g quinua cocida + ensalada verde + limón</div><div class="option-macros">690 kcal | P50g G28g C62g</div></div>
+            <div class="option"><div class="option-header">Opción 3</div><div class="option-content">180g lomo magro + 200g papa cocida + vegetales salteados + 1cda aceite</div><div class="option-macros">700 kcal | P54g G24g C65g</div></div>
+            <div class="option"><div class="option-header">Opción 4</div><div class="option-content">2 latas atún en agua + 150g lentejas cocidas + 50g palta + ensalada</div><div class="option-macros">670 kcal | P56g G25g C58g</div></div>
+        </div>
+        <div class="meal-block">
+            <div class="meal-header">
+                <div class="meal-emoji">🥗</div>
+                <div class="meal-title">
+                    <div class="meal-name">Snack / Cena - Última Comida</div>
+                    <div class="meal-time">6:00 - 7:00 PM | Elige 1 opción</div>
+                </div>
+            </div>
+            <div class="option"><div class="option-header">Opción 1</div><div class="option-content">200g yogurt griego 0% + 100g frutos rojos + 15g almendras</div><div class="option-macros">320 kcal | P28g G12g C28g</div></div>
+            <div class="option"><div class="option-header">Opción 2</div><div class="option-content">150g queso cottage + 1 durazno mediano + 10g nueces</div><div class="option-macros">310 kcal | P26g G14g C22g</div></div>
+            <div class="option"><div class="option-header">Opción 3</div><div class="option-content">2 huevos duros + 100g tomate cherry + 20g aceitunas + 1 galleta integral</div><div class="option-macros">340 kcal | P22g G24g C12g</div></div>
+            <div class="option"><div class="option-header">Opción 4</div><div class="option-content">50g palta + 1 lata atún + 2 galletas integrales</div><div class="option-macros">350 kcal | P30g G20g C18g</div></div>
+        </div>
+        <div class="total-dia">TOTAL DÍA: 1,670 - 1,800 kcal | P130-145g | G50-60g | C130-170g</div>
+    </div>
+
+    <div class="footer">
+        <strong>INSTRUCCIONES:</strong> Combina 1 opción de cada comida. Hidratación: 2.5-3L agua al día. <br>
+        Todos los pesos son en crudo excepto arroz, quinua, lentejas y papa que son cocidos. <br>
+        Ajusta porciones según tolerancia. Para control de salud y resultados óptimos, consulta a tu nutricionista.
+    </div>
+</div>
+<script>(function(){document.addEventListener("click",function(e){var a=e.target.closest("[data-product-id]");if(!a)return;e.preventDefault();var pid=a.getAttribute("data-product-id");if(pid)parent.postMessage({type:"ecto-artifact-link-click",productId:pid},"*")})})();</script>
+</body>
+</html>
